@@ -79,3 +79,7 @@ def handle_video_upload(chat_id, file):
         send_message(chat_id, f"✅ Uploaded!\n🔗 {upload_resp['result']['link']}")
     else:
         send_message(chat_id, "❌ Upload failed.")
+if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
