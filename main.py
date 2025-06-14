@@ -1,87 +1,120 @@
 from flask import Flask, request
 import requests
 import os
-import tempfile
-import logging
 
-# === CONFIGURATION ===
-BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
-PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-PIXELDRAIN_UPLOAD_URL = "https://pixeldrain.com/api/file"
-
-# === INIT ===
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
 
-# === TELEGRAM MESSAGE ===
+BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
+API_KEY = "35948at4rupqy8a1w8hjh"
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
+
+
 def send_message(chat_id, text):
-    requests.post(f"{API_URL}/sendMessage", json={
+    """Send a message to the Telegram user."""
+    url = API_URL + "sendMessage"
+    data = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True
-    })
+        "parse_mode": "Markdown"
+    }
+    requests.post(url, json=data)
 
-# === PIXELDRAIN UPLOAD FUNCTION ===
-def upload_from_url(file_url):
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
-            response = requests.get(file_url, stream=True)
-            if not response.ok:
-                return None
 
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    tmp_file.write(chunk)
-
-            tmp_file_path = tmp_file.name
-
-        # Upload to PixelDrain
-        with open(tmp_file_path, "rb") as f:
-            headers = {
-                "Authorization": f"Bearer {PIXELDRAIN_API_KEY}"
-            }
-            upload = requests.post(
-                PIXELDRAIN_UPLOAD_URL,
-                headers=headers,
-                files={"file": f}
-            )
-
-        os.remove(tmp_file_path)
-
-        if upload.ok and upload.json().get("success"):
-            file_id = upload.json()["id"]
-            return f"https://pixeldrain.com/u/{file_id}"
-        else:
-            return None
-    except Exception as e:
-        logging.error(f"Upload error: {e}")
-        return None
-
-# === FLASK TELEGRAM HOOK ===
-@app.route("/", methods=["POST"])
+@app.route('/', methods=['POST'])
 def webhook():
-    data = request.get_json()
-    message = data.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
+    update = request.get_json()
+
+    if not update:
+        return "No update received"
+
+    message = update.get("message")
+    if not message:
+        return "No message"
+
+    chat_id = message["chat"]["id"]
     text = message.get("text")
+    video = message.get("video") or message.get("document")
 
-    if not text or not text.startswith("http"):
-        send_message(chat_id, "⚠️ Please send a valid video URL.")
-        return "ok"
+    # /start command
+    if text and text.startswith("/start"):
+        send_message(chat_id, "👋 *Hello, I am URL to Stream & Upload Bot!*")
 
-    send_message(chat_id, "📥 Downloading and uploading your video...")
+    # /uploadurl <video_url>
+    elif text and text.startswith("/uploadurl"):
+        parts = text.split(" ", 1)
+        if len(parts) < 2:
+            send_message(chat_id, "❗ Usage: `/uploadurl <video_url>`")
+        else:
+            video_url = parts[1].strip()
 
-    pixeldrain_link = upload_from_url(text)
+            # Optional: basic format check
+            if not video_url.startswith("http"):
+                send_message(chat_id, "❗ Please provide a valid video URL.")
+                return "ok"
 
-    if pixeldrain_link:
-        send_message(chat_id, f"✅ Uploaded!\n🔗 [Stream Now]({pixeldrain_link})")
-    else:
-        send_message(chat_id, "❌ Upload failed. Try again later.")
+            send_message(chat_id, "🔄 Uploading via URL...")
+
+            try:
+                res = requests.get(
+                    f"https://earnvidsapi.com/api/upload/url?key={API_KEY}&url={video_url}",
+                    timeout=15
+                ).json()
+
+                if res.get("status") == 200:
+                    filecode = res["result"]["filecode"]
+                    send_message(chat_id, f"✅ Uploaded!\n🔗 https://movearnpre.com/embed/{filecode}")
+                else:
+                    send_message(chat_id, f"❌ Failed: {res.get('msg') or 'Unknown error'}")
+
+            except Exception as e:
+                send_message(chat_id, f"⚠️ Upload failed: `{str(e)}`")
+
+    # If user sends a file or video
+    elif video:
+        file_id = video["file_id"]
+        send_message(chat_id, "📥 Downloading your file...")
+
+        try:
+            file_info = requests.get(API_URL + f"getFile?file_id={file_id}").json()
+            file_path = file_info["result"]["file_path"]
+            download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+
+            local_filename = f"temp_{file_id}.mp4"
+            with open(local_filename, "wb") as f:
+                f.write(requests.get(download_url).content)
+
+            send_message(chat_id, "⏫ Uploading to EarnVids...")
+
+            upload_server = requests.get(
+                f"https://earnvidsapi.com/api/upload/server?key={API_KEY}"
+            ).json()
+
+            if upload_server.get("status") == 200:
+                upload_url = upload_server["result"]
+
+                with open(local_filename, "rb") as f:
+                    files = {
+                        "file": (local_filename, f),
+                        "key": (None, API_KEY)
+                    }
+                    upload_response = requests.post(upload_url, files=files).json()
+
+                os.remove(local_filename)
+
+                if upload_response.get("status") == 200:
+                    filecode = upload_response["files"][0]["filecode"]
+                    send_message(chat_id, f"✅ Uploaded!\n🔗 https://movearnpre.com/embed/{filecode}")
+                else:
+                    send_message(chat_id, "❌ Upload failed.")
+            else:
+                send_message(chat_id, "❌ Failed to get upload server.")
+
+        except Exception as e:
+            send_message(chat_id, f"⚠️ Error during upload: `{str(e)}`")
 
     return "ok"
 
-# === MAIN ===
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+
+# Flask runs for local dev; Render will use gunicorn
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
