@@ -2,79 +2,82 @@ from flask import Flask, request
 import requests
 import os
 import base64
+import subprocess
 
 app = Flask(__name__)
 
-BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
-PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"  # 🔐 Set this to your real API key
+PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"
+PIXELDRAIN_UPLOAD_URL = "https://pixeldrain.com/api/file/"
 
 def send_message(chat_id, text):
-    """Send a message to the Telegram user."""
-    url = API_URL + "sendMessage"
-    data = {
+    requests.post(API_URL + "sendMessage", json={
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "Markdown"
-    }
-    requests.post(url, json=data)
+    })
 
-@app.route('/', methods=['POST'])
+def upload_to_pixeldrain(file_path):
+    with open(file_path, "rb") as f:
+        headers = {
+            "Authorization": "Basic " + base64.b64encode(f":{PIXELDRAIN_API_KEY}".encode()).decode()
+        }
+        response = requests.post(PIXELDRAIN_UPLOAD_URL, headers=headers, files={"file": f}).json()
+        return response.get("id")
+
+@app.route("/", methods=["POST"])
 def webhook():
     update = request.get_json()
-
-    if not update:
-        return "No update received"
-
-    message = update.get("message")
-    if not message:
-        return "No message"
-
-    chat_id = message["chat"]["id"]
-    text = message.get("text")
+    message = update.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
     video = message.get("video") or message.get("document")
 
-    if text and text.startswith("/start"):
-        send_message(chat_id, "👋 *Hello! I can upload your videos to PixelDrain!*")
+    if not video:
+        send_message(chat_id, "❗ Please send a video or document.")
+        return "ok"
 
-    elif video:
-        file_id = video["file_id"]
-        send_message(chat_id, "📥 Downloading your file...")
+    file_id = video["file_id"]
+    send_message(chat_id, "📥 Downloading your file...")
 
-        try:
-            file_info = requests.get(API_URL + f"getFile?file_id={file_id}").json()
-            file_path = file_info["result"]["file_path"]
-            download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+    file_info = requests.get(API_URL + f"getFile?file_id={file_id}").json()
+    file_path = file_info["result"]["file_path"]
+    download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+    local_file = f"file_{file_id}.mp4"
 
-            local_filename = f"temp_{file_id}.mp4"
-            with open(local_filename, "wb") as f:
-                f.write(requests.get(download_url).content)
+    # Download file
+    with open(local_file, "wb") as f:
+        f.write(requests.get(download_url).content)
 
-            send_message(chat_id, "⏫ Uploading to PixelDrain...")
+    send_message(chat_id, "🧱 Splitting file...")
 
-            with open(local_filename, "rb") as f:
-                headers = {
-                    "Authorization": "Basic " + base64.b64encode(f":{PIXELDRAIN_API_KEY}".encode()).decode()
-                }
-                response = requests.post(
-                    "https://pixeldrain.com/api/file/",
-                    headers=headers,
-                    files={"file": f}
-                ).json()
+    # Split using ffmpeg into 9500MB parts
+    split_prefix = f"split_{file_id}_"
+    subprocess.run([
+        "ffmpeg", "-i", local_file, "-fs", "9500M", f"{split_prefix}%03d.mp4"
+    ], check=True)
 
-            os.remove(local_filename)
+    os.remove(local_file)
 
-            if "id" in response:
-                file_id = response["id"]
-                file_url = f"https://pixeldrain.com/u/{file_id}"
-                send_message(chat_id, f"✅ Uploaded!\n🔗 {file_url}")
+    # Upload each split part
+    links = []
+    for fname in sorted(os.listdir(".")):
+        if fname.startswith(split_prefix) and fname.endswith(".mp4"):
+            send_message(chat_id, f"⏫ Uploading `{fname}`...")
+            file_id = upload_to_pixeldrain(fname)
+            if file_id:
+                links.append(f"https://pixeldrain.com/u/{file_id}")
+                os.remove(fname)
             else:
-                send_message(chat_id, f"❌ Upload failed: `{response.get('message', 'Unknown error')}`")
+                send_message(chat_id, f"❌ Failed to upload `{fname}`")
 
-        except Exception as e:
-            send_message(chat_id, f"⚠️ Error during upload: `{str(e)}`")
+    if links:
+        reply = "✅ Uploaded Parts:\n" + "\n".join(links)
+        send_message(chat_id, reply)
+    else:
+        send_message(chat_id, "❌ No parts uploaded successfully.")
 
     return "ok"
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
