@@ -2,18 +2,14 @@ from flask import Flask, request
 import requests
 import os
 import base64
+import math
 
 app = Flask(__name__)
 
-# Directly set your tokens here
-BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
-PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"
-
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
+PIXELDRAIN_API_KEY = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
 PIXELDRAIN_UPLOAD_URL = "https://pixeldrain.com/api/file/"
-
-CHUNK_SIZE_MB = 9500  # 9500MB per part
-CHUNK_SIZE = CHUNK_SIZE_MB * 1024 * 1024
 
 def send_message(chat_id, text):
     requests.post(API_URL + "sendMessage", json={
@@ -30,21 +26,6 @@ def upload_to_pixeldrain(file_path):
         response = requests.post(PIXELDRAIN_UPLOAD_URL, headers=headers, files={"file": f}).json()
         return response.get("id")
 
-def split_file_binary(file_path, prefix):
-    parts = []
-    with open(file_path, "rb") as f:
-        i = 0
-        while True:
-            chunk = f.read(CHUNK_SIZE)
-            if not chunk:
-                break
-            part_name = f"{prefix}_part{i}.mp4"
-            with open(part_name, "wb") as pf:
-                pf.write(chunk)
-            parts.append(part_name)
-            i += 1
-    return parts
-
 @app.route("/", methods=["POST"])
 def webhook():
     update = request.get_json()
@@ -59,39 +40,39 @@ def webhook():
     file_id = video["file_id"]
     send_message(chat_id, "📥 Downloading your file...")
 
+    # Get file download path from Telegram
     file_info = requests.get(API_URL + f"getFile?file_id={file_id}").json()
-
-    if "result" not in file_info:
-        send_message(chat_id, f"❌ Failed to get file info:\n{file_info}")
-        return "ok"
-
     file_path = file_info["result"]["file_path"]
     download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
     local_file = f"file_{file_id}.mp4"
 
+    # Get file size
+    file_head = requests.head(download_url)
+    file_size = int(file_head.headers.get("Content-Length", 0))
+    downloaded = 0
+    percent_notified = 0
+
+    # Stream download with progress
+    response = requests.get(download_url, stream=True)
     with open(local_file, "wb") as f:
-        f.write(requests.get(download_url).content)
+        for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB
+            if chunk:
+                f.write(chunk)
+                downloaded += len(chunk)
+                percent = math.floor((downloaded / file_size) * 100)
+                if percent >= percent_notified + 10:
+                    percent_notified = percent
+                    send_message(chat_id, f"⬇️ Downloaded {percent}%...")
 
-    send_message(chat_id, "🔪 Splitting the file...")
+    send_message(chat_id, "⏫ Uploading to PixelDrain...")
 
-    split_files = split_file_binary(local_file, f"chunk_{file_id}")
+    file_code = upload_to_pixeldrain(local_file)
     os.remove(local_file)
 
-    links = []
-    for part in split_files:
-        send_message(chat_id, f"⏫ Uploading `{part}`...")
-        pid = upload_to_pixeldrain(part)
-        if pid:
-            links.append(f"https://pixeldrain.com/u/{pid}")
-            os.remove(part)
-        else:
-            send_message(chat_id, f"❌ Failed to upload `{part}`")
-
-    if links:
-        reply = "✅ Uploaded Parts:\n" + "\n".join(links)
-        send_message(chat_id, reply)
+    if file_code:
+        send_message(chat_id, f"✅ Upload Complete!\n🔗 [View File](https://pixeldrain.com/u/{file_code})")
     else:
-        send_message(chat_id, "❌ No parts uploaded successfully.")
+        send_message(chat_id, "❌ Upload failed.")
 
     return "ok"
 
