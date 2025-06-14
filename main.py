@@ -2,85 +2,99 @@ from flask import Flask, request
 import requests
 import os
 
-# 🔒 Replace with your actual tokens directly
-BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
-EARNVIDS_API_KEY = "35948at4rupqy8a1w8hjh"
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
-
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def index():
-    return "🤖 Bot is alive and running!"
+BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
+API_KEY = "35948at4rupqy8a1w8hjh"
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
 
-@app.route("/", methods=["POST"])
-def webhook():
-    update = request.get_json()
-    if not update:
-        return "Invalid", 400
-
-    message = update.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
-
-    if "text" in message:
-        text = message["text"]
-        if text.startswith("/start"):
-            send_message(chat_id, "👋 Welcome! Send a video or use /uploadurl <link>")
-        elif text.startswith("/uploadurl"):
-            handle_url_upload(chat_id, text)
-    elif "video" in message or "document" in message:
-        handle_video_upload(chat_id, message.get("video") or message.get("document"))
-
-    return "OK", 200
 
 def send_message(chat_id, text):
-    requests.get(API_URL + "sendMessage", params={
+    url = API_URL + "sendMessage"
+    data = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "HTML"
-    })
+        "parse_mode": "Markdown"
+    }
+    requests.post(url, json=data)
 
-def handle_url_upload(chat_id, text):
-    parts = text.split(" ", 1)
-    if len(parts) < 2:
-        send_message(chat_id, "❗ Usage: /uploadurl <video_url>")
-        return
 
-    video_url = parts[1].strip()
-    api = f"https://earnvidsapi.com/api/upload/url?key={EARNVIDS_API_KEY}&url={video_url}"
-    response = requests.get(api).json()
+@app.route('/', methods=['POST'])
+def webhook():
+    update = request.get_json()
 
-    if response["status"] == 200:
-        filecode = response["result"]["filecode"]
-        send_message(chat_id, f"✅ Uploaded!\n🔗 <code>https://movearnpre.com/embed/{filecode}</code>")
-    else:
-        send_message(chat_id, f"❌ Failed: {response['msg']}")
+    if not update:
+        return "No update received"
 
-def handle_video_upload(chat_id, file):
-    send_message(chat_id, "📥 Downloading your video...")
-    file_id = file["file_id"]
-    file_info = requests.get(API_URL + f"getFile?file_id={file_id}").json()
-    file_path = file_info["result"]["file_path"]
-    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+    message = update.get("message")
+    if not message:
+        return "No message"
 
-    local_file = f"video_{chat_id}.mp4"
-    with open(local_file, "wb") as f:
-        f.write(requests.get(file_url).content)
+    chat_id = message["chat"]["id"]
+    text = message.get("text")
+    video = message.get("video") or message.get("document")
 
-    send_message(chat_id, "⏫ Uploading to EarnVids...")
-    upload_url = requests.get(
-        f"https://api.earnvids.com/api/upload/server?key={EARNVIDS_API_KEY}"
-    ).json()["result"]["upload_server"]
+    if text and text.startswith("/start"):
+        send_message(chat_id, "👋 *Hello, I am URL to Stream & Upload Bot!*")
 
-    with open(local_file, "rb") as f:
-        upload_resp = requests.post(upload_url, files={"file": f}).json()
+    elif text and text.startswith("/uploadurl"):
+        parts = text.split(" ", 1)
+        if len(parts) < 2:
+            send_message(chat_id, "❗ Usage: `/uploadurl <video_url>`")
+        else:
+            video_url = parts[1].strip()
+            res = requests.get(
+                f"https://earnvidsapi.com/api/upload/url?key={API_KEY}&url={video_url}"
+            ).json()
+            if res.get("status") == 200:
+                filecode = res["result"]["filecode"]
+                send_message(chat_id, f"✅ Uploaded!
+🔗 https://movearnpre.com/embed/{filecode}")
+            else:
+                send_message(chat_id, f"❌ Failed: {res.get('msg')}")
 
-    os.remove(local_file)
+    elif video:
+        file_id = video["file_id"]
+        send_message(chat_id, "📥 Downloading your file...")
 
-    if "result" in upload_resp and "link" in upload_resp["result"]:
-        send_message(chat_id, f"✅ Uploaded!\n🔗 {upload_resp['result']['link']}")
-    else:
-        send_message(chat_id, "❌ Upload failed.")
+        file_info = requests.get(API_URL + f"getFile?file_id={file_id}").json()
+        file_path = file_info["result"]["file_path"]
+        download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+        local_filename = f"temp_{file_id}.mp4"
+        with open(local_filename, "wb") as f:
+            f.write(requests.get(download_url).content)
+
+        send_message(chat_id, "⏫ Uploading to EarnVids...")
+
+        upload_server = requests.get(
+            f"https://earnvidsapi.com/api/upload/server?key={API_KEY}"
+        ).json()
+
+        if upload_server.get("status") == 200:
+            upload_url = upload_server["result"]
+
+            with open(local_filename, "rb") as f:
+                files = {
+                    "file": (local_filename, f),
+                    "key": (None, API_KEY)
+                }
+                upload_response = requests.post(upload_url, files=files).json()
+
+            os.remove(local_filename)
+
+            if upload_response.get("status") == 200:
+                filecode = upload_response["files"][0]["filecode"]
+                send_message(chat_id, f"✅ Uploaded!
+🔗 https://movearnpre.com/embed/{filecode}")
+            else:
+                send_message(chat_id, "❌ Upload failed.")
+
+        else:
+            send_message(chat_id, "❌ Failed to get upload server.")
+
+    return "ok"
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
