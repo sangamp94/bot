@@ -7,7 +7,7 @@ app = Flask(__name__)
 
 BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
-PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822	"  # 🔐 Set this to your real API key
+PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"  # 🔐 Set this to your real API key
 
 def send_message(chat_id, text):
     """Send a message to the Telegram user."""
