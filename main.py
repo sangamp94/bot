@@ -4,7 +4,6 @@ import os
 import tempfile
 import logging
 from urllib.parse import quote
-import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,22 +39,19 @@ def send_message(chat_id, text):
 def upload_to_pixeldrain(file_path):
     try:
         if not os.path.exists(file_path):
-            logger.error(f"File not found for upload: {file_path}")
+            logger.error(f"File not found: {file_path}")
             return None
             
-        logger.info(f"Attempting to upload file: {file_path} (size: {os.path.getsize(file_path)} bytes)")
-        
         with open(file_path, "rb") as f:
             response = requests.post(
                 PIXELDRAIN_UPLOAD_URL,
                 headers={"Authorization": f"Bearer {PIXELDRAIN_API_KEY}"},
                 files={"file": f},
-                timeout=60*30  # 30 minute timeout for large files
+                timeout=60*10
             )
             response.raise_for_status()
             data = response.json()
             if data.get("success"):
-                logger.info(f"Upload successful for {file_path}")
                 return data["id"]
             logger.error(f"PixelDrain upload failed: {data}")
             return None
@@ -67,24 +63,21 @@ def split_file(filename, chunk_size_mb=CHUNK_SIZE_MB):
     parts = []
     part_num = 1
     chunk_size = chunk_size_mb * 1024 * 1024
-    
+
     try:
         file_size = os.path.getsize(filename)
-        logger.info(f"Splitting file {filename} (size: {file_size} bytes)")
-        
         if file_size <= chunk_size:
             return [filename]
-        
+
         with open(filename, "rb") as f:
             while True:
                 chunk = f.read(chunk_size)
                 if not chunk:
                     break
-                
+
                 part_filename = f"{filename}_part{part_num}.mp4"
                 with open(part_filename, "wb") as part:
                     part.write(chunk)
-                logger.info(f"Created part {part_num}: {part_filename}")
                 parts.append(part_filename)
                 part_num += 1
         return parts
@@ -97,12 +90,16 @@ def split_file(filename, chunk_size_mb=CHUNK_SIZE_MB):
                 pass
         raise
 
+def cleanup_files(*files):
+    for file_path in files:
+        try:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            logger.warning(f"Could not delete file {file_path}: {str(e)}")
+
 @app.route("/", methods=["POST"])
 def webhook():
-    temp_dir = None
-    local_file = None
-    parts = []
-    
     try:
         update = request.get_json()
         if not update:
@@ -135,12 +132,10 @@ def webhook():
 
         file_path = file_info["result"]["file_path"]
         download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{quote(file_path)}"
-        
-        # Create a temporary directory for all files
+
+        # Create temp dir
         temp_dir = tempfile.mkdtemp()
         local_file = os.path.join(temp_dir, f"{file_id}.mp4")
-        logger.info(f"Created temp directory: {temp_dir}")
-        logger.info(f"Downloading to: {local_file}")
 
         try:
             with requests.get(download_url, stream=True, timeout=60*15) as r:
@@ -149,57 +144,50 @@ def webhook():
                     for chunk in r.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
-            logger.info(f"Download complete. File size: {os.path.getsize(local_file)} bytes")
         except requests.exceptions.RequestException as e:
             send_message(chat_id, "❌ Error downloading file.")
             logger.error(f"Download error: {str(e)}")
+            cleanup_files(local_file)
+            os.rmdir(temp_dir)
             return "ok"
 
         send_message(chat_id, "✂️ Splitting file...")
         try:
             parts = split_file(local_file)
-            logger.info(f"Split into {len(parts)} parts")
+            # Only delete if file was split into multiple parts
+            if len(parts) > 1 and local_file in parts:
+                cleanup_files(local_file)
         except Exception as e:
             send_message(chat_id, "❌ Error splitting file.")
             logger.error(f"File split error: {str(e)}")
+            cleanup_files(local_file)
+            os.rmdir(temp_dir)
             return "ok"
 
         links = []
         for part in parts:
-            if not os.path.exists(part):
-                logger.error(f"Part file missing: {part}")
-                send_message(chat_id, f"❌ File part missing: {os.path.basename(part)}")
-                continue
-                
             send_message(chat_id, f"⏫ Uploading `{os.path.basename(part)}`...")
             link_id = upload_to_pixeldrain(part)
             if link_id:
                 links.append(f"https://pixeldrain.com/u/{link_id}")
             else:
                 send_message(chat_id, f"❌ Failed to upload `{os.path.basename(part)}`")
+            cleanup_files(part)
 
         if links:
             send_message(chat_id, "✅ Uploaded Parts:\n" + "\n".join(links))
         else:
             send_message(chat_id, "❌ All uploads failed.")
 
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
+
     except Exception as e:
         logger.error(f"Unexpected error in webhook: {str(e)}", exc_info=True)
-        if chat_id:
+        if 'chat_id' in locals():
             send_message(chat_id, "❌ An unexpected error occurred. Please try again.")
-    finally:
-        # Clean up all files and directory
-        logger.info("Cleaning up temporary files...")
-        try:
-            if local_file and os.path.exists(local_file):
-                os.remove(local_file)
-            for part in parts:
-                if part and os.path.exists(part):
-                    os.remove(part)
-            if temp_dir and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-        except Exception as e:
-            logger.error(f"Error during cleanup: {str(e)}")
 
     return "ok"
 
