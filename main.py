@@ -1,8 +1,7 @@
+import os
 from flask import Flask, request
 import requests
-import os
 
-# ⛔ HARDCODED values (update these before uploading!)
 BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
 EARNVIDS_API_KEY = "35948at4rupqy8a1w8hjh"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
@@ -10,14 +9,14 @@ API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
 app = Flask(__name__)
 
 @app.route("/", methods=["GET"])
-def index():
+def home():
     return "✅ Bot is running!"
 
 @app.route("/", methods=["POST"])
 def webhook():
     update = request.get_json()
     if not update:
-        return "Invalid", 400
+        return "No update", 400
 
     message = update.get("message", {})
     chat_id = message.get("chat", {}).get("id")
