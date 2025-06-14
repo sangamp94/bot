@@ -1,13 +1,13 @@
 from flask import Flask, request
 import requests
 import os
+import base64
 
 app = Flask(__name__)
 
 BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
-API_KEY = "35948at4rupqy8a1w8hjh"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
-
+PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822	"  # 🔐 Set this to your real API key
 
 def send_message(chat_id, text):
     """Send a message to the Telegram user."""
@@ -18,7 +18,6 @@ def send_message(chat_id, text):
         "parse_mode": "Markdown"
     }
     requests.post(url, json=data)
-
 
 @app.route('/', methods=['POST'])
 def webhook():
@@ -35,41 +34,9 @@ def webhook():
     text = message.get("text")
     video = message.get("video") or message.get("document")
 
-    # /start command
     if text and text.startswith("/start"):
-        send_message(chat_id, "👋 *Hello, I am URL to Stream & Upload Bot!*")
+        send_message(chat_id, "👋 *Hello! I can upload your videos to PixelDrain!*")
 
-    # /uploadurl <video_url>
-    elif text and text.startswith("/uploadurl"):
-        parts = text.split(" ", 1)
-        if len(parts) < 2:
-            send_message(chat_id, "❗ Usage: `/uploadurl <video_url>`")
-        else:
-            video_url = parts[1].strip()
-
-            # Optional: basic format check
-            if not video_url.startswith("http"):
-                send_message(chat_id, "❗ Please provide a valid video URL.")
-                return "ok"
-
-            send_message(chat_id, "🔄 Uploading via URL...")
-
-            try:
-                res = requests.get(
-                    f"https://earnvidsapi.com/api/upload/url?key={API_KEY}&url={video_url}",
-                    timeout=15
-                ).json()
-
-                if res.get("status") == 200:
-                    filecode = res["result"]["filecode"]
-                    send_message(chat_id, f"✅ Uploaded!\n🔗 https://movearnpre.com/embed/{filecode}")
-                else:
-                    send_message(chat_id, f"❌ Failed: {res.get('msg') or 'Unknown error'}")
-
-            except Exception as e:
-                send_message(chat_id, f"⚠️ Upload failed: `{str(e)}`")
-
-    # If user sends a file or video
     elif video:
         file_id = video["file_id"]
         send_message(chat_id, "📥 Downloading your file...")
@@ -83,38 +50,31 @@ def webhook():
             with open(local_filename, "wb") as f:
                 f.write(requests.get(download_url).content)
 
-            send_message(chat_id, "⏫ Uploading to EarnVids...")
+            send_message(chat_id, "⏫ Uploading to PixelDrain...")
 
-            upload_server = requests.get(
-                f"https://earnvidsapi.com/api/upload/server?key={API_KEY}"
-            ).json()
+            with open(local_filename, "rb") as f:
+                headers = {
+                    "Authorization": "Basic " + base64.b64encode(f":{PIXELDRAIN_API_KEY}".encode()).decode()
+                }
+                response = requests.post(
+                    "https://pixeldrain.com/api/file/",
+                    headers=headers,
+                    files={"file": f}
+                ).json()
 
-            if upload_server.get("status") == 200:
-                upload_url = upload_server["result"]
+            os.remove(local_filename)
 
-                with open(local_filename, "rb") as f:
-                    files = {
-                        "file": (local_filename, f),
-                        "key": (None, API_KEY)
-                    }
-                    upload_response = requests.post(upload_url, files=files).json()
-
-                os.remove(local_filename)
-
-                if upload_response.get("status") == 200:
-                    filecode = upload_response["files"][0]["filecode"]
-                    send_message(chat_id, f"✅ Uploaded!\n🔗 https://movearnpre.com/embed/{filecode}")
-                else:
-                    send_message(chat_id, "❌ Upload failed.")
+            if "id" in response:
+                file_id = response["id"]
+                file_url = f"https://pixeldrain.com/u/{file_id}"
+                send_message(chat_id, f"✅ Uploaded!\n🔗 {file_url}")
             else:
-                send_message(chat_id, "❌ Failed to get upload server.")
+                send_message(chat_id, f"❌ Upload failed: `{response.get('message', 'Unknown error')}`")
 
         except Exception as e:
             send_message(chat_id, f"⚠️ Error during upload: `{str(e)}`")
 
     return "ok"
 
-
-# Flask runs for local dev; Render will use gunicorn
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
