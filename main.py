@@ -1,5 +1,6 @@
 from flask import Flask, request
 import requests
+import os
 
 # ⛔ HARDCODED values (update these before uploading!)
 BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
@@ -72,14 +73,13 @@ def handle_video_upload(chat_id, file):
     with open(local_file, "rb") as f:
         upload_resp = requests.post(upload_url, files={"file": f}).json()
 
-    import os
     os.remove(local_file)
 
     if "result" in upload_resp and "link" in upload_resp["result"]:
         send_message(chat_id, f"✅ Uploaded!\n🔗 {upload_resp['result']['link']}")
     else:
         send_message(chat_id, "❌ Upload failed.")
+
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
