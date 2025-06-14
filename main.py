@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configuration - tokens are kept here as in original code
+# Configuration
 BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
 PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"
-MAX_FILE_SIZE_MB = 2000  # Maximum file size to process (2GB)
-CHUNK_SIZE_MB = 950      # Split files into chunks just under Telegram's 1GB limit
+MAX_FILE_SIZE_MB = 2000
+CHUNK_SIZE_MB = 950
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 PIXELDRAIN_UPLOAD_URL = "https://pixeldrain.com/api/file"
@@ -38,12 +38,16 @@ def send_message(chat_id, text):
 
 def upload_to_pixeldrain(file_path):
     try:
+        if not os.path.exists(file_path):
+            logger.error(f"File not found: {file_path}")
+            return None
+            
         with open(file_path, "rb") as f:
             response = requests.post(
                 PIXELDRAIN_UPLOAD_URL,
                 headers={"Authorization": f"Bearer {PIXELDRAIN_API_KEY}"},
                 files={"file": f},
-                timeout=60*10  # 10 minute timeout for large files
+                timeout=60*10
             )
             response.raise_for_status()
             data = response.json()
@@ -63,7 +67,7 @@ def split_file(filename, chunk_size_mb=CHUNK_SIZE_MB):
     try:
         file_size = os.path.getsize(filename)
         if file_size <= chunk_size:
-            return [filename]  # No need to split
+            return [filename]
         
         with open(filename, "rb") as f:
             while True:
@@ -79,7 +83,6 @@ def split_file(filename, chunk_size_mb=CHUNK_SIZE_MB):
         return parts
     except Exception as e:
         logger.error(f"Error splitting file: {str(e)}")
-        # Clean up any created parts
         for part in parts:
             try:
                 os.remove(part)
@@ -109,7 +112,6 @@ def webhook():
         if not chat_id or not file:
             return "ok"
 
-        # Check file size
         file_size = file.get("file_size", 0)
         if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
             send_message(chat_id, f"❌ File too large. Maximum size is {MAX_FILE_SIZE_MB}MB.")
@@ -118,7 +120,6 @@ def webhook():
         file_id = file["file_id"]
         send_message(chat_id, "📥 Downloading your file...")
 
-        # Get download URL
         try:
             file_info = requests.get(f"{API_URL}/getFile?file_id={file_id}", timeout=10).json()
             if not file_info.get("result"):
@@ -132,12 +133,11 @@ def webhook():
         file_path = file_info["result"]["file_path"]
         download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{quote(file_path)}"
         
-        # Use temp directory for downloads
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_file:
-            local_file = temp_file.name
+        # Create a temporary directory for all files
+        temp_dir = tempfile.mkdtemp()
+        local_file = os.path.join(temp_dir, f"{file_id}.mp4")
 
         try:
-            # Download file with streaming to handle large files
             with requests.get(download_url, stream=True, timeout=60*15) as r:
                 r.raise_for_status()
                 with open(local_file, "wb") as f:
@@ -148,6 +148,7 @@ def webhook():
             send_message(chat_id, "❌ Error downloading file.")
             logger.error(f"Download error: {str(e)}")
             cleanup_files(local_file)
+            os.rmdir(temp_dir)
             return "ok"
 
         send_message(chat_id, "✂️ Splitting file...")
@@ -158,6 +159,7 @@ def webhook():
             send_message(chat_id, "❌ Error splitting file.")
             logger.error(f"File split error: {str(e)}")
             cleanup_files(local_file)
+            os.rmdir(temp_dir)
             return "ok"
 
         links = []
@@ -175,6 +177,12 @@ def webhook():
         else:
             send_message(chat_id, "❌ All uploads failed.")
 
+        # Clean up temp directory
+        try:
+            os.rmdir(temp_dir)
+        except:
+            pass
+
     except Exception as e:
         logger.error(f"Unexpected error in webhook: {str(e)}", exc_info=True)
         if chat_id:
@@ -183,5 +191,4 @@ def webhook():
     return "ok"
 
 if __name__ == "__main__":
-    # For development only - use proper WSGI server in production
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
