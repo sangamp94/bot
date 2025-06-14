@@ -4,7 +4,7 @@ import os
 
 app = Flask(__name__)
 
-# Hardcoded tokens
+# Hardcoded bot token and PixelDrain API key
 BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
 PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -18,14 +18,20 @@ def send_message(chat_id, text):
     })
 
 def upload_to_pixeldrain(file_path):
-    with open(file_path, "rb") as f:
-        response = requests.post(
-            PIXELDRAIN_UPLOAD_URL,
-            headers={"Authorization": f"Bearer {PIXELDRAIN_API_KEY}"},
-            files={"file": f}
-        )
-        if response.ok and response.json().get("success"):
-            return response.json()["id"]
+    try:
+        with open(file_path, "rb") as f:
+            response = requests.post(
+                PIXELDRAIN_UPLOAD_URL,
+                headers={"Authorization": f"Bearer {PIXELDRAIN_API_KEY}"},
+                files={"file": f}
+            )
+            data = response.json()
+            if response.ok and data.get("success") and "id" in data:
+                return data["id"]
+            print("❌ Upload failed:", data)
+            return None
+    except Exception as e:
+        print(f"❌ Upload error: {e}")
         return None
 
 def split_file(filename, chunk_size_mb=950):
@@ -56,19 +62,25 @@ def webhook():
     file_id = file["file_id"]
     send_message(chat_id, "📥 Downloading your file...")
 
-    # Get download URL
     file_info = requests.get(f"{API_URL}/getFile?file_id={file_id}").json()
-    if "result" not in file_info:
+    file_path = file_info.get("result", {}).get("file_path")
+
+    if not file_path:
         send_message(chat_id, "❌ Error: Couldn't get file info.")
         return "ok"
 
-    file_path = file_info["result"]["file_path"]
     download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
     local_file = f"{file_id}.mp4"
 
-    # Download file
-    with open(local_file, "wb") as f:
-        f.write(requests.get(download_url).content)
+    try:
+        r = requests.get(download_url, stream=True)
+        with open(local_file, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+    except Exception as e:
+        send_message(chat_id, f"❌ Download failed: {str(e)}")
+        return "ok"
 
     send_message(chat_id, "✂️ Splitting file...")
     parts = split_file(local_file)
@@ -80,9 +92,9 @@ def webhook():
         link_id = upload_to_pixeldrain(part)
         if link_id:
             links.append(f"https://pixeldrain.com/u/{link_id}")
-            os.remove(part)
         else:
             send_message(chat_id, f"❌ Failed to upload `{part}`")
+        os.remove(part)
 
     if links:
         send_message(chat_id, "✅ Uploaded Parts:\n" + "\n".join(links))
@@ -92,10 +104,6 @@ def webhook():
     return "ok"
 
 if __name__ == "__main__":
-    from gunicorn.app.base import BaseApplication
-
-    class FlaskApp(BaseApplication):
-        def load_config(self): pass
-        def load(self): return app
-
-    FlaskApp().run()
+    import sys
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
