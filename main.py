@@ -6,9 +6,9 @@ import subprocess
 
 app = Flask(__name__)
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+BOT_TOKEN = "YOUR_BOT_TOKEN"  # Replace with your real bot token
+PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"  # Your real API key
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
-PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"
 PIXELDRAIN_UPLOAD_URL = "https://pixeldrain.com/api/file/"
 
 def send_message(chat_id, text):
@@ -23,12 +23,19 @@ def upload_to_pixeldrain(file_path):
         headers = {
             "Authorization": "Basic " + base64.b64encode(f":{PIXELDRAIN_API_KEY}".encode()).decode()
         }
-        response = requests.post(PIXELDRAIN_UPLOAD_URL, headers=headers, files={"file": f}).json()
-        return response.get("id")
+        response = requests.post(PIXELDRAIN_UPLOAD_URL, headers=headers, files={"file": f})
+        try:
+            res_json = response.json()
+            return res_json.get("id")
+        except:
+            return None
 
 @app.route("/", methods=["POST"])
 def webhook():
     update = request.get_json()
+    if not update:
+        return "No update received"
+
     message = update.get("message", {})
     chat_id = message.get("chat", {}).get("id")
     video = message.get("video") or message.get("document")
@@ -40,26 +47,43 @@ def webhook():
     file_id = video["file_id"]
     send_message(chat_id, "📥 Downloading your file...")
 
-    file_info = requests.get(API_URL + f"getFile?file_id={file_id}").json()
-    file_path = file_info["result"]["file_path"]
+    try:
+        file_info = requests.get(API_URL + f"getFile?file_id={file_id}").json()
+        file_path = file_info["result"]["file_path"]
+    except Exception as e:
+        send_message(chat_id, f"❌ Failed to get file info: `{str(e)}`")
+        return "ok"
+
     download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
     local_file = f"file_{file_id}.mp4"
 
-    # Download file
-    with open(local_file, "wb") as f:
-        f.write(requests.get(download_url).content)
+    try:
+        file_data = requests.get(download_url)
+        if file_data.status_code != 200:
+            send_message(chat_id, "❌ Failed to download file from Telegram.")
+            return "ok"
 
-    send_message(chat_id, "🧱 Splitting file...")
+        with open(local_file, "wb") as f:
+            f.write(file_data.content)
 
-    # Split using ffmpeg into 9500MB parts
+    except Exception as e:
+        send_message(chat_id, f"❌ Download error: `{str(e)}`")
+        return "ok"
+
+    send_message(chat_id, "🔪 Splitting file into parts...")
+
     split_prefix = f"split_{file_id}_"
-    subprocess.run([
-        "ffmpeg", "-i", local_file, "-fs", "9500M", f"{split_prefix}%03d.mp4"
-    ], check=True)
+    try:
+        subprocess.run([
+            "ffmpeg", "-i", local_file, "-fs", "9500M", f"{split_prefix}%03d.mp4"
+        ], check=True)
+        os.remove(local_file)
+    except subprocess.CalledProcessError:
+        send_message(chat_id, "❌ FFmpeg failed to split the file.")
+        return "ok"
 
-    os.remove(local_file)
+    send_message(chat_id, "📤 Uploading parts to PixelDrain...")
 
-    # Upload each split part
     links = []
     for fname in sorted(os.listdir(".")):
         if fname.startswith(split_prefix) and fname.endswith(".mp4"):
@@ -72,7 +96,7 @@ def webhook():
                 send_message(chat_id, f"❌ Failed to upload `{fname}`")
 
     if links:
-        reply = "✅ Uploaded Parts:\n" + "\n".join(links)
+        reply = "✅ *Uploaded Parts:*\n" + "\n".join(links)
         send_message(chat_id, reply)
     else:
         send_message(chat_id, "❌ No parts uploaded successfully.")
