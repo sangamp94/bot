@@ -6,56 +6,61 @@ import subprocess
 import logging
 from urllib.parse import quote
 
+# Bot & API keys
 BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
 PIXELDRAIN_API_KEY = "ee21fba3-0282-46d7-bb33-cf1cf54af822"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 PIXELDRAIN_UPLOAD_URL = "https://pixeldrain.com/api/file"
+
+# File limits
 CHUNK_SIZE_MB = 950
 MAX_FILE_SIZE_MB = 2000
 
+# Init
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Send message to user
 def send_message(chat_id, text):
-    try:
-        requests.post(f"{API_URL}/sendMessage", json={
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True
-        })
-    except Exception as e:
-        logger.error(f"❌ Error sending message: {e}")
+    requests.post(f"{API_URL}/sendMessage", json={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
+    })
 
+# Upload a file to PixelDrain with proper Basic Auth
 def upload_to_pixeldrain(file_path):
     try:
         with open(file_path, "rb") as f:
             res = requests.post(
                 PIXELDRAIN_UPLOAD_URL,
-                headers={"Authorization": f"Bearer {PIXELDRAIN_API_KEY}"},
+                auth=("user", PIXELDRAIN_API_KEY),  # Basic auth
                 files={"file": f}
             )
         if res.ok and res.json().get("success"):
             return res.json()["id"]
-        logger.error(f"❌ Upload failed: {res.text}")
+        else:
+            logger.error(f"❌ Upload failed: {res.text}")
     except Exception as e:
         logger.error(f"❌ Exception during upload: {e}")
     return None
 
+# Split file using ffmpeg
 def ffmpeg_split(file_path, output_dir):
     split_files = []
     try:
-        duration = float(subprocess.check_output([
+        duration = subprocess.check_output([
             "ffprobe", "-v", "error", "-show_entries",
             "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path
-        ]).decode().strip())
-
-        chunk_sec = 600  # ~10 minutes per part (~950MB approx)
+        ]).decode().strip()
+        duration = float(duration)
+        chunk_sec = (CHUNK_SIZE_MB * 1024 * 1024) / (1024 * 1024) * 60  # ~1MB ≈ 1sec
 
         i = 0
         while True:
-            part_path = os.path.join(output_dir, f"{os.path.basename(file_path)}_part{i+1}.mp4")
+            part_path = os.path.join(output_dir, f"part{i + 1}.mp4")
             cmd = [
                 "ffmpeg", "-y", "-ss", str(i * chunk_sec), "-i", file_path,
                 "-t", str(chunk_sec), "-c", "copy", part_path
@@ -69,9 +74,10 @@ def ffmpeg_split(file_path, output_dir):
             else:
                 break
     except Exception as e:
-        logger.error(f"❌ FFmpeg split failed: {e}")
+        logger.error(f"❌ ffmpeg split error: {e}")
     return split_files
 
+# Telegram Webhook handler
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
@@ -84,33 +90,27 @@ def webhook():
 
     file_id = file["file_id"]
     file_size = file.get("file_size", 0)
+
     if file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
         send_message(chat_id, f"❌ File too large. Max allowed is {MAX_FILE_SIZE_MB}MB.")
         return "ok"
 
     send_message(chat_id, "📥 Downloading your file...")
 
-    try:
-        file_info = requests.get(f"{API_URL}/getFile?file_id={file_id}").json()
-        file_path = file_info["result"]["file_path"]
-        download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{quote(file_path)}"
-    except Exception as e:
-        send_message(chat_id, "❌ Error getting file info.")
-        logger.error(f"Error: {e}")
+    file_info = requests.get(f"{API_URL}/getFile?file_id={file_id}").json()
+    if "result" not in file_info:
+        send_message(chat_id, "❌ Failed to fetch file info.")
         return "ok"
 
+    file_path = file_info["result"]["file_path"]
+    download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{quote(file_path)}"
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        local_path = os.path.join(tmpdir, os.path.basename(file_path))
-        try:
-            with open(local_path, "wb") as f:
-                f.write(requests.get(download_url).content)
-        except Exception as e:
-            send_message(chat_id, "❌ Failed to download the file.")
-            logger.error(f"❌ Download error: {e}")
-            return "ok"
+        local_path = os.path.join(tmpdir, f"{file_id}.mp4")
+        with open(local_path, "wb") as f:
+            f.write(requests.get(download_url).content)
 
-        send_message(chat_id, "✂️ Splitting file..." if file_size > CHUNK_SIZE_MB * 1024 * 1024 else "⏫ Uploading file...")
-
+        send_message(chat_id, "✂️ Splitting file...")
         if file_size < CHUNK_SIZE_MB * 1024 * 1024:
             parts = [local_path]
         else:
@@ -126,11 +126,12 @@ def webhook():
                 send_message(chat_id, f"❌ Failed to upload `{os.path.basename(part)}`")
 
         if links:
-            send_message(chat_id, "✅ Uploaded:\n" + "\n".join(links))
+            send_message(chat_id, "✅ Uploaded Parts:\n" + "\n".join(links))
         else:
             send_message(chat_id, "❌ Upload failed.")
 
     return "ok"
 
+# Run the app
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
