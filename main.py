@@ -13,7 +13,7 @@ VALID_TOKEN = "12345678"  # Replace this with your private token
 user_tokens = {}         # chat_id: expiry time
 last_upload_time = {}    # chat_id: last upload time
 TOKEN_EXPIRY_HOURS = 5
-UPLOAD_COOLDOWN_MINUTES = 10
+UPLOAD_COOLDOWN_MINUTES = 2
 
 
 def send_message(chat_id, text):
