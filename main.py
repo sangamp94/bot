@@ -54,7 +54,7 @@ def webhook():
 
     # /start command
     if text and text.startswith("/start"):
-        send_message(chat_id, "👋 *Hello, I am URL to Stream & Upload Bot!*")
+        send_message(chat_id, "👋 *Hello, I am URL to Stream & Upload Bot!* T&C : users are responsible for their uploads. disclaimer : Use Only upload content you own or have permission to use.")
         return "ok"
 
     # /token <your_token>
