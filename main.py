@@ -9,7 +9,7 @@ BOT_TOKEN = "7989632830:AAF3VKtSPf252DX83aTFXlVbg5jMeBFk6PY"
 API_KEY = "35948at4rupqy8a1w8hjh"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
 
-VALID_TOKEN = "12345678"  # Replace this with your private token
+VALID_TOKEN = "616900"  # Replace this with your private token
 user_tokens = {}         # chat_id: expiry time
 last_upload_time = {}    # chat_id: last upload time
 TOKEN_EXPIRY_HOURS = 5
@@ -61,7 +61,7 @@ def webhook():
     if text and text.startswith("/token"):
         parts = text.split(" ", 1)
         if len(parts) < 2:
-            send_message(chat_id, "❗ Usage: `/token <your_token>`")
+            send_message(chat_id, "❗ Usage: `/token <your_token> Get from our channel https://t.me/Streamfy_offical`")
             return "ok"
 
         input_token = parts[1].strip()
