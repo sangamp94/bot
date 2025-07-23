@@ -9,8 +9,8 @@ app = Flask(__name__)
 HLS_DIR = "/tmp/hls"
 TIMEZONE = pytz.timezone("Asia/Kolkata")
 
-BIN_ID = "6880d04f7b4b8670d8a5ed02"
-API_KEY = "$2a$10$PIOW5cERiCAJX3idNpMDXO93/stUEHE5OLlqgNbRZhUx12PHeVWiO" # Using the provided API key
+BIN_ID = "6880d04f7b4b8670d8a5ed02" # Updated BIN_ID
+API_KEY = "$2a$10$PIOW5cERiCAJX3idNpMDXO93/stUEHE5OLlqgNbRZhUx12PHeVWiO" # Updated API_KEY
 
 os.makedirs(HLS_DIR, exist_ok=True)
 
@@ -18,9 +18,10 @@ def fetch_playlists_local():
     """Fetches the show playlists from a local video.json file."""
     try:
         with open("video.json", "r") as f:
+            print("[INFO] Successfully loaded video.json.")
             return json.load(f)
     except FileNotFoundError:
-        print("[ERROR] video.json not found. Please create it.")
+        print("[ERROR] video.json not found. Please create it in the root directory.")
         return {}
     except json.JSONDecodeError as e:
         print(f"[ERROR] Invalid JSON in video.json: {e}")
@@ -219,6 +220,7 @@ def get_video_dimensions(url):
 def get_current_show():
     """Determines the current show based on the scheduled time."""
     now = datetime.now(TIMEZONE)
+    print(f"[DEBUG] Current time (Asia/Kolkata): {now.strftime('%H:%M:%S')}")
     current_minutes = now.hour * 60 + now.minute
     playlists = fetch_playlists_local()
     show_times = []
@@ -238,6 +240,7 @@ def get_current_show():
 
     # Sort by time
     sorted_times = sorted(show_times)
+    print(f"[DEBUG] Parsed show times (minutes from midnight): {sorted_times}")
 
     # Add a sentinel for the end of the day to simplify time range calculation
     # Using 23:59 to ensure the last actual show slot is correctly captured before midnight.
@@ -247,7 +250,9 @@ def get_current_show():
         start_minutes, show_name = sorted_times[i]
         end_minutes, _ = sorted_times[i + 1]
 
+        print(f"[DEBUG] Checking slot: {show_name} from {start_minutes} to {end_minutes} minutes. Current: {current_minutes}")
         if start_minutes <= current_minutes < end_minutes:
+            print(f"[INFO] Found active show: {show_name}")
             # Return show name, elapsed time in current slot (seconds), remaining time in current slot (seconds)
             return show_name, (current_minutes - start_minutes) * 60, (end_minutes - current_minutes) * 60
 
