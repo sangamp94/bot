@@ -9,8 +9,8 @@ app = Flask(__name__)
 HLS_DIR = "/tmp/hls"
 TIMEZONE = pytz.timezone("Asia/Kolkata")
 
-BIN_ID = "685a3ffa8960c979a5b03d5e"
-API_KEY = "$2a$10$aheQWRQVHF9QZYaxcNn8OidFVSLtUhIA5N7DC5y4qkOJuOr1K" # Using the provided API key
+BIN_ID = "6880d04f7b4b8670d8a5ed02"
+API_KEY = "$2a$10$PIOW5cERiCAJX3idNpMDXO93/stUEHE5OLlqgNbRZhUx12PHeVWiO" # Using the provided API key
 
 os.makedirs(HLS_DIR, exist_ok=True)
 
