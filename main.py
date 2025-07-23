@@ -9,8 +9,8 @@ app = Flask(__name__)
 HLS_DIR = "/tmp/hls"
 TIMEZONE = pytz.timezone("Asia/Kolkata")
 
-BIN_ID = "6880d04f7b4b8670d8a5ed02" # Updated BIN_ID
-API_KEY = "$2a$10$PIOW5cERiCAJX3idNpMDXO93/stUEHE5OLlqgNbRZhUx12PHeVWiO" # Updated API_KEY
+BIN_ID = "6880d04f7b4b8670d8a5ed02"
+API_KEY = "$2a$10$PIOW5cERiCAJX3idNpMDXO93/stUEHE5OLlqgNbRZhUx12PHeVWiO" # Using the provided API key
 
 os.makedirs(HLS_DIR, exist_ok=True)
 
@@ -441,7 +441,7 @@ def start_ffmpeg_stream():
             inputs += ["-i", final_channel_logo_path]
             # scale channel logo to 200x100
             logo_filters.append(f"[{logo_input_index}:v]scale=200:100[channellogo]")
-            # overlay channel logo at top-right (W-w-10,10)
+            # overlay channel logo at top-right (W-w-10:10)
             filter_parts.append(f"{current_video_stream_name}[channellogo]overlay=W-w-10:10[temp_overlay_channel]")
             current_video_stream_name = "[temp_overlay_channel]"
             logo_input_index += 1
