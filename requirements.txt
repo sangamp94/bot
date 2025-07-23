@@ -1,4 +1,4 @@
-flask
-pytz
+Flask
+gunicorn
 requests
-
+pytz
