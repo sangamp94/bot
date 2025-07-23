@@ -1,0 +1,29 @@
+{
+  "timeline": {
+    "17:00": "pokemon",
+    "01:00": "chhota",
+    "02:00": "news_channel"
+  },
+  "pokemon": {
+    "episodes": [
+      { "url": "https://www.8088y.site/JioTv/play.php?id=1391", "type": "file" },  // <--- Add your web link here
+      { "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4", "type": "file" }
+    ],
+    "logo": "https://via.placeholder.com/180x100.png?text=Pokemon+Logo",
+    "time": "17:00"
+  },
+  "chhota": {
+    "episodes": [
+      { "url": "http://some.other.live.stream/channel", "type": "live" }
+    ],
+    "logo": "https://via.placeholder.com/180x100.png?text=Chhota+Bheem+Logo",
+    "time": "01:00"
+  },
+  "news_channel": {
+    "episodes": [
+      { "url": "http://your.news.live.stream/feed", "type": "live" }
+    ],
+    "logo": "https://via.placeholder.com/180x100.png?text=News+Logo",
+    "time": "02:00"
+  }
+}
