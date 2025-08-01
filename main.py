@@ -83,14 +83,12 @@ def start_stream_for_show(show_name, show_info):
 
     print(f"[🎬] Starting new stream for: {show_name}")
 
-    # --- MODIFIED FFmpeg command to remove logos ---
     ffmpeg_cmd = [
         "ffmpeg", "-re",
         "-f", "concat", "-safe", "0",
         "-protocol_whitelist", "file,crypto,data,http,https,tls,tcp",
         "-i", PLAYLIST_FILE,
-        # Logo inputs and -filter_complex have been removed
-        "-vf", "setpts=PTS-STARTPTS", # Video filter to reset timestamps for smooth looping
+        "-vf", "setpts=PTS-STARTPTS",
         "-c:v", "libx264", "-preset", "ultrafast",
         "-maxrate", "800k", "-bufsize", "1000k",
         "-c:a", "aac", "-b:a", "128k",
@@ -155,8 +153,13 @@ def current_status():
         "playlist": info.get("videos", [])
     })
 
+# --- Main Application Start ---
+
+# Start the background thread that manages FFmpeg when Gunicorn loads the app
+threading.Thread(target=manage_stream, daemon=True).start()
 
 if __name__ == "__main__":
-    print("[🚀] Starting server on http://0.0.0.0:10000")
-    threading.Thread(target=manage_stream, daemon=True).start()
+    # This block is for local testing only (e.g., running `python app.py`)
+    # It will not be used by Gunicorn on your server.
+    print("[🚀] Starting local development server...")
     app.run(host="0.0.0.0", port=10000)
