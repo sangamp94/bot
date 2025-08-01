@@ -85,6 +85,9 @@ def start_stream_for_show(show_name, show_info):
 
     ffmpeg_cmd = [
         "ffmpeg", "-re",
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "5",
         "-f", "concat", "-safe", "0",
         "-protocol_whitelist", "file,crypto,data,http,https,tls,tcp",
         "-i", PLAYLIST_FILE,
