@@ -1,79 +1,162 @@
-from flask 
-import Flask, send_from_directory, render_template_string
+from flask import Flask, send_file, jsonify, abort
+from datetime import datetime, timedelta
+import threading
 import subprocess
+import json
 import os
+import pytz
+import time
+
+# --- Configuration ---
+CONFIG_PATH = "video.json"
+with open(CONFIG_PATH, "r") as f:
+    CONFIG = json.load(f)
+print("[✅] Configuration loaded successfully from video.json")
+
+CHANNEL_NAME = CONFIG.get("channel_name", "TV Channel")
+TIMEZONE = pytz.timezone(CONFIG.get("timezone", "Asia/Kolkata"))
+SCHEDULE = CONFIG.get("timeline", [])
+PLAYLISTS = CONFIG.get("playlists", {})
+OUTPUT_HLS = "static/stream.m3u8"
+PLAYLIST_FILE = "playlist.txt"
+
+# --- Global State Management ---
+current_process = None
+current_show_name = None
 
 app = Flask(__name__)
-OUTPUT_DIR = "output_hls"
+if not os.path.exists("static"):
+    os.makedirs("static")
 
-# Your stream info (⚠️ Make sure it's a valid .mpd)
-MPD_URL = "https://deadpooll.fun/JIOSSTAR78/1373.mpd"
-KEY = "3dca7917d8cf9bb7095dc72b48bdcd3c"
 
-@app.before_first_request
-def convert_dash_to_hls():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+def get_current_show():
+    """Determines the current show based on the schedule."""
+    now = datetime.now(TIMEZONE)
+    today = now.date()
+    schedule = sorted(SCHEDULE, key=lambda x: datetime.strptime(x["start"], "%H:%M").time())
 
-    hls_playlist = os.path.join(OUTPUT_DIR, "output.m3u8")
-    hls_segment_path = os.path.join(OUTPUT_DIR, "segment_%03d.ts")
+    for i, entry in enumerate(schedule):
+        naive_start = datetime.combine(today, datetime.strptime(entry["start"], "%H:%M").time())
+        start_time = TIMEZONE.localize(naive_start)
 
-    if os.path.exists(hls_playlist):
-        print("✅ HLS already exists.")
+        next_i = (i + 1) % len(schedule)
+        naive_end = datetime.combine(today, datetime.strptime(schedule[next_i]["start"], "%H:%M").time())
+        end_time = TIMEZONE.localize(naive_end)
+
+        if end_time <= start_time:
+            end_time += timedelta(days=1)
+
+        if start_time <= now < end_time:
+            return entry["show"], PLAYLISTS.get(entry["show"], {})
+
+    fallback_show = schedule[0]
+    return fallback_show["show"], PLAYLISTS.get(fallback_show["show"], {})
+
+
+def stop_current_stream():
+    """Stops the currently running FFmpeg process."""
+    global current_process
+    if current_process:
+        print(f"[🔄] Stopping current stream for '{current_show_name}'...")
+        current_process.terminate()
+        try:
+            current_process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            print("[⚠️] FFmpeg did not terminate gracefully, killing.")
+            current_process.kill()
+        print("[✅] Stream stopped.")
+        current_process = None
+
+
+def start_stream_for_show(show_name, show_info):
+    """Starts a new FFmpeg stream for a given show."""
+    global current_process
+    video_urls = show_info.get("videos", [])
+
+    if not video_urls:
+        print(f"[⚠️] No videos found for show '{show_name}'. Waiting.")
         return
 
-    print("🔄 Converting DASH to HLS using FFmpeg...")
+    with open(PLAYLIST_FILE, "w") as f:
+        for url in video_urls:
+            f.write(f"file '{url}'\n")
 
-    command = [
-        "ffmpeg", "-allowed_extensions", "ALL",
-        "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
-        "-decryption_key", KEY,
-        "-i", MPD_URL,
-        "-c", "copy", "-f", "hls",
-        "-hls_time", "6",
-        "-hls_playlist_type", "vod",
-        "-hls_segment_filename", hls_segment_path,
-        hls_playlist
+    print(f"[🎬] Starting new stream for: {show_name}")
+
+    # --- MODIFIED FFmpeg command to remove logos ---
+    ffmpeg_cmd = [
+        "ffmpeg", "-re",
+        "-f", "concat", "-safe", "0",
+        "-protocol_whitelist", "file,crypto,data,http,https,tls,tcp",
+        "-i", PLAYLIST_FILE,
+        # Logo inputs and -filter_complex have been removed
+        "-vf", "setpts=PTS-STARTPTS", # Video filter to reset timestamps for smooth looping
+        "-c:v", "libx264", "-preset", "ultrafast",
+        "-maxrate", "800k", "-bufsize", "1000k",
+        "-c:a", "aac", "-b:a", "128k",
+        "-f", "hls",
+        "-hls_time", "10",
+        "-hls_list_size", "5",
+        "-hls_flags", "delete_segments+program_date_time",
+        OUTPUT_HLS
     ]
+    
+    print(f"Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
+    current_process = subprocess.Popen(ffmpeg_cmd)
 
-    try:
-        subprocess.run(command, check=True)
-        print("✅ FFmpeg completed successfully.")
-    except subprocess.CalledProcessError as e:
-        print("❌ FFmpeg failed:")
-        print(e)
 
+def manage_stream():
+    """The main loop to manage starting and stopping streams based on the schedule."""
+    global current_show_name
+    while True:
+        try:
+            new_show, show_info = get_current_show()
+            if new_show != current_show_name:
+                stop_current_stream()
+                start_stream_for_show(new_show, show_info)
+                current_show_name = new_show
+        except Exception as e:
+            print(f"[❌] Error in management loop: {e}")
+        
+        time.sleep(15)
+
+
+# --- Flask Routes ---
 @app.route("/")
-def index():
-    return render_template_string("""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Disney Channel HLS</title>
-        <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    </head>
-    <body>
-        <h2>📺 Disney Channel (via ClearKey HLS)</h2>
-        <video id="video" width="640" controls autoplay></video>
-        <script>
-        if (Hls.isSupported()) {
-            var video = document.getElementById('video');
-            var hls = new Hls();
-            hls.loadSource('/stream/output.m3u8');
-            hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED,function() {
-                video.play();
-            });
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = '/stream/output.m3u8';
-        }
-        </script>
-    </body>
-    </html>
-    """)
+def home():
+    return f"{CHANNEL_NAME} is live 🎥"
 
-@app.route("/stream/<path:filename>")
-def serve_hls(filename):
-    return send_from_directory(OUTPUT_DIR, filename)
+
+@app.route("/stream/live.m3u8")
+def stream():
+    if not os.path.exists(OUTPUT_HLS):
+        abort(404, description="HLS playlist not available yet. Please try again.")
+
+    response = send_file(OUTPUT_HLS, mimetype='application/vnd.apple.mpegurl')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+@app.route("/stream/<segment>")
+def stream_segment(segment):
+    segment_path = os.path.join("static", segment)
+    if not os.path.exists(segment_path):
+        abort(404, description="Segment not found.")
+    
+    response = send_file(segment_path, mimetype='video/MP2T')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
+
+@app.route("/status")
+def current_status():
+    show, info = get_current_show()
+    return jsonify({
+        "channel": CHANNEL_NAME,
+        "current_show": show,
+        "playlist": info.get("videos", [])
+    })
+
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    print("[🚀] Starting server on http://0.0.0.0:10000")
+    threading.Thread(target=manage_stream, daemon=True).start()
+    app.run(host="0.0.0.0", port=10000)
