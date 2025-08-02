@@ -12,7 +12,8 @@
     "Main Live Feed": {
       "logo_url": "https://path/to/your/live-logo.png",
       "videos": [
-        "https://archive.org/download/myvideo_20250802_032922/my_video_upload.mp4"
+        "https://archive.org/download/myvideo_20250802_032922/my_video_upload.mp4",
+        "https://ia903204.us.archive.org/19/items/myvideo_20250802_054330/my_video_upload.mp4"
       ]
     }
   }
