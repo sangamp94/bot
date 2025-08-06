@@ -34,7 +34,7 @@ except pytz.UnknownTimeZoneError:
 SCHEDULE = sorted(CONFIG.get("timeline", []), key=lambda x: datetime.strptime(x["start"], "%H:%M").time())
 PLAYLISTS = CONFIG.get("playlists", {})
 OUTPUT_DIR = "static"
-OUTPUT_HLS_PLAYLIST = os.path.join(OUTPUT_DIR, "stream.m3u8")
+OUTPUT_HLS_PLAYLIST = os.path.join(OUTPUT_DIR, "live.m3u8")
 PLAYLIST_FILE = "playlist.txt"
 LOCK_FILE = "stream_manager.lock"
 LOGO_PATH = "logo.png"
